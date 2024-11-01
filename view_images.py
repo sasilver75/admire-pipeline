@@ -1,41 +1,64 @@
-from flask import Flask, render_template, url_for
+from flask import Flask, render_template, send_from_directory, request
+import pandas as pd
 import os
-from pathlib import Path
+import ast  # For safely evaluating string representation of list
 
-app = Flask(__name__, static_url_path='', static_folder='train')
+app = Flask(__name__)
 
-def get_idiom_dirs():
-    train_path = Path('train')
-    return sorted([d for d in train_path.iterdir() if d.is_dir()])
+# Load and process the TSV data
+data = pd.read_csv('subtask_a_train.tsv', sep='\t')
+entries = []
 
-def get_images_from_dir(dir_path):
-    image_extensions = {'.jpg', '.jpeg', '.png', '.gif'}
-    return sorted([
-        f.name for f in dir_path.iterdir() 
-        if f.is_file() and f.suffix.lower() in image_extensions
-    ])[:5]  # Limit to first 5 images
+for _, row in data.iterrows():
+    # Handle apostrophes in compound names for directory lookup
+    image_dir = row['compound'].replace("'", "_")
+    
+    # Parse the expected_order string into a list
+    expected_order = ast.literal_eval(row['expected_order'])
+    
+    # Create list of image paths and their ranks
+    image_data = []
+    for i in range(1, 6):
+        image_name = row[f'image{i}_name']
+        image_path = f'{image_dir}/{image_name}'
+        if os.path.exists(os.path.join('train', image_path)):
+            # Find rank (index + 1) of this image in expected_order
+            rank = expected_order.index(image_name) + 1
+            image_data.append({
+                'path': image_path,
+                'rank': rank
+            })
+
+    if image_data:  # Only add entries that have images
+        entry = {
+            'compound': row['compound'],
+            'sentence': row['sentence'],
+            'sentence_type': row['sentence_type'],
+            'images': image_data
+        }
+        entries.append(entry)
 
 @app.route('/')
-@app.route('/<int:idiom_index>')
-def show_idiom(idiom_index=0):
-    idiom_dirs = get_idiom_dirs()
+def index():
+    page = request.args.get('page', 0, type=int)
     
-    # Handle index bounds
-    if idiom_index >= len(idiom_dirs):
-        idiom_index = 0
-    elif idiom_index < 0:
-        idiom_index = len(idiom_dirs) - 1
+    # Ensure page is within bounds
+    if page >= len(entries):
+        page = 0
+    elif page < 0:
+        page = len(entries) - 1
+        
+    entry = entries[page]
     
-    current_dir = idiom_dirs[idiom_index]
-    idiom_name = current_dir.name
-    images = get_images_from_dir(current_dir)
-    
-    return render_template('idiom.html',
-                         idiom_name=idiom_name,
-                         images=images,
-                         current_index=idiom_index,
-                         prev_index=(idiom_index - 1),
-                         next_index=(idiom_index + 1))
+    return render_template('idiom.html', 
+                         entry=entry,
+                         page=page,
+                         total_pages=len(entries))
+
+@app.route('/train/<path:filename>')
+def serve_image(filename):
+    return send_from_directory('train', filename)
 
 if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+    print("Starting Flask server at http://localhost:5001")
+    app.run(host='0.0.0.0', port=5001, debug=True)

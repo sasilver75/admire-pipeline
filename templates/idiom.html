@@ -1,32 +1,110 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Image Viewer</title>
+    <title>Idiom Images</title>
     <style>
-        .image-container {
-            display: inline-block;
-            margin: 10px;
+        .entry {
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            max-width: 1800px;
+        }
+        .text-content {
+            max-width: 800px;  /* Limit text width */
+            margin: 0 auto;    /* Center the text content */
             text-align: center;
         }
-        .caption {
+        .images {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 20px;
+            margin-top: 20px;
+            justify-content: center;
+            overflow-x: auto;
+            padding: 10px 0;
+        }
+        .image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .image-container img {
+            width: 250px;
+            height: 250px;
+            object-fit: cover;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 5px;
+        }
+        .rank {
             margin-top: 5px;
-            max-width: 200px;
+            font-weight: bold;
+            color: #333;
+        }
+        .compound {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .sentence {
+            font-size: 18px;
+            margin-bottom: 10px;
+            line-height: 1.4;  /* Improve readability */
+        }
+        .sentence-type {
+            color: #666;
+            font-style: italic;
+            margin-bottom: 10px;
+        }
+        .navigation {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .nav-button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .nav-button:hover {
+            background-color: #0056b3;
+        }
+        .page-info {
+            margin-top: 10px;
+            text-align: center;
+            color: #666;
         }
     </style>
 </head>
 <body>
-    <h1>{{ idiom_name }}</h1>
-    
-    {% for i in range(images|length) %}
-    <div class="image-container">
-        <img src="{{ url_for('static', filename=idiom_name + '/' + images[i]) }}" width="200">
-        <div class="caption">{{ captions[i] }}</div>
-    </div>
-    {% endfor %}
-    
-    <div>
-        <a href="{{ url_for('show_idiom', idiom_index=prev_index) }}">Previous</a>
-        <a href="{{ url_for('show_idiom', idiom_index=next_index) }}">Next</a>
+    <div class="entry">
+        <div class="text-content">
+            <div class="compound">{{ entry.compound }}</div>
+            <div class="sentence-type">Type: {{ entry.sentence_type }}</div>
+            <div class="sentence">{{ entry.sentence }}</div>
+        </div>
+        <div class="images">
+            {% for image in entry.images %}
+            <div class="image-container">
+                <img src="{{ url_for('serve_image', filename=image.path) }}" alt="Image for {{ entry.compound }}">
+                <div class="rank">Rank: {{ image.rank }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="navigation">
+            <a href="/?page={{ page - 1 }}" class="nav-button">Previous</a>
+            <a href="/?page={{ page + 1 }}" class="nav-button">Next</a>
+        </div>
+        <div class="page-info">
+            Page {{ page + 1 }} of {{ total_pages }}
+        </div>
     </div>
 </body>
-</html>
+</html> 
