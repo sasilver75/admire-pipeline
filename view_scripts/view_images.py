@@ -3,10 +3,11 @@ import pandas as pd
 import os
 import ast  # For safely evaluating string representation of list
 
-app = Flask(__name__)
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
+app = Flask(__name__, template_folder=template_dir)
 
 # Load and process the TSV data
-data = pd.read_csv('subtask_a_train.tsv', sep='\t')
+data = pd.read_csv('data/subtask_a_train.tsv', sep='\t')
 entries = []
 
 for _, row in data.iterrows():
@@ -21,7 +22,7 @@ for _, row in data.iterrows():
     for i in range(1, 6):
         image_name = row[f'image{i}_name']
         image_path = f'{image_dir}/{image_name}'
-        if os.path.exists(os.path.join('train', image_path)):
+        if os.path.exists(os.path.join('data/train', image_path)):
             # Find rank (index + 1) of this image in expected_order
             rank = expected_order.index(image_name) + 1
             image_data.append({
@@ -57,7 +58,8 @@ def index():
 
 @app.route('/train/<path:filename>')
 def serve_image(filename):
-    return send_from_directory('train', filename)
+    train_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'train'))
+    return send_from_directory(train_dir, filename)
 
 if __name__ == '__main__':
     print("Starting Flask server at http://localhost:5001")
