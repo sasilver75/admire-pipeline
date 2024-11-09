@@ -1,4 +1,20 @@
 from enum import Enum, auto
+from dotenv import load_dotenv
+import anthropic
+import os
+import prompts.prompts as prompts
+
+# Loads .env file into environment variable; e.g. so we can access ANTHROPIC_API_KEY
+load_dotenv()
+
+# Get an Anthropic API key on your own from the Anthropic web console.
+# NOTE: I'm using Claude 3.5 Sonnet for now... but maybe we should try using an open-weights model like L3.1 8B Instruct via (eg) OpenRouter 
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError(
+        "API key not found. Please set the ANTHROPIC_API_KEY environment variable."
+    )
+anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 class ImageCategory(Enum):
     """
@@ -40,3 +56,15 @@ def extract_image_categories(response: str) -> dict[ImageCategory, str]:
             categories[category_number_name_lookup[i]] = prompt
             
     return categories
+
+def prompt_for_image_prompts(compound: str, usage: str) -> dict[ImageCategory, str]:
+    """
+    Prompts the language model to create image generation prompts for the given compound and usage.
+    """
+    prompt = prompts.PROMPT_V1.format(COMPOUND=compound, USAGE=usage)
+    response = anthropic_client.messages.create(
+        model="claude-3-5-sonnet-20240620",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+    )
+    return extract_image_categories(response.content[0].text)
