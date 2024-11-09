@@ -1,6 +1,5 @@
-
 """
-These are prompts that are used with Anthropic's prompt generation tool to create the prompts that we _actually_ want to use.
+These are prompts that are used with Anthropic's prompt generation tool (see Anthropic workbench) to create the prompts that we _actually_ want to use.
 We're keeping them versioned so that we have a record of the progression of the prompt prompts.
 """
 
