@@ -1,5 +1,11 @@
+
+"""
+These are prompts that are used with Anthropic's prompt generation tool to create the prompts that we _actually_ want to use.
+We're keeping them versioned so that we have a record of the progression of the prompt prompts.
+"""
+
 # TODO: Maybe this would be better if for the examples I restated somehow (eg on a different line) what the category was, instead of relying on the LM's ability to match up each image description to the image category.
-PROMPT_PROMPT = """
+PROMPT_PROMPT_V1 = """
 I want to generate a prompt that will be used to generate prompts to a diffusion model like Stable Diffusion. 
 
 The context is that I will want to inject into this prompt a "compound" and a "usage", where a compound can be a phrase like "heart of gold," and usage has values of either "literal" or "idiomatic". 
