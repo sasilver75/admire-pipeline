@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import ast  # For safely evaluating string representation of list
 
-template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 
 # Load and process the TSV data
