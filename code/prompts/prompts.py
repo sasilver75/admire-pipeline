@@ -3,7 +3,7 @@ These are prompts that result from the Anthropic prompt generation tool,
 using the corresponding version numbers of the prompt prompts.
 """
 
-PROMPT_V1 = """
+USER_PROMPT = """
 You are tasked with generating prompts for an image generation model based on a given compound phrase. Your goal is to create five distinct prompts, each corresponding to a specific image category. These prompts should be designed to produce images that clearly represent their respective categories.
 
 Input variables:
@@ -19,8 +19,10 @@ Generate prompts for the following five image categories:
 4. Something related to the literal meaning, but not synonymous with it.
 5. A distractor, which belongs to the same category as the compound (e.g., an object or activity) but is unrelated to both the literal and idiomatic meanings.
 
+First, generate an example sentence showing the compound in use under each interpretation (idiomatic, literal).
+
 For each category, follow these steps:
-1. Analyze the compound to determine the appropriate interpretation.
+1. Analyze the compound to determine the appropriate interpretation, based on the image category.
 2. Brainstorm potential content that fits the category's requirements.
 3. Develop a detailed image generation prompt that includes:
    a. A clear description of the main subject or action
@@ -28,6 +30,14 @@ For each category, follow these steps:
    c. Any specific visual elements that should be included
 
 Present your output in the following format:
+
+<idiomatic_sentence>
+[Your example sentence for the idiomatic interpretation]
+</idiomatic_sentence>
+
+<literal_sentence>
+[Your example sentence for the literal interpretation]
+</literal_sentence>
 
 <prompts>
 <category1>
@@ -54,7 +64,15 @@ Additional guidelines:
 - For the "related" categories (3 and 4), think creatively about associations that are not direct synonyms.
 - For the distractor category, choose something that is thematically unrelated but belongs to the same broad category (e.g., object, action, or concept) as the compound.
 
-Example output format (do not use this content, it's just to illustrate the structure):
+Example output format for "burning the midnight oil" (do not use this content, it's just to illustrate the structure):
+
+<idiomatic_sentence>
+The medical student was burning the midnight oil as she prepared for her final exams.
+</idiomatic_sentence>
+
+<literal_sentence>
+During the power outage, the family resorted to burning the midnight oil in their antique lantern to light their home.
+</literal_sentence>
 
 <prompts>
 <category1>
@@ -75,4 +93,28 @@ A vibrant farmers' market scene with colorful stalls selling fresh produce. In t
 </prompts>
 
 Remember to tailor your prompts to the specific provided compound phrase, ensuring that each category is clearly represented and distinct from the others.
+"""
+
+SYSTEM_PROMPT = """
+You are an expert at generating detailed, creative image generation prompts. 
+When analyzing compound phrases, you excel at identifying both literal and idiomatic meanings, and can generate distinct, vivid descriptions that clearly differentiate between these interpretations.
+
+Your responses should always:
+1. Be highly detailed and specific
+2. Include clear visual elements that an image generation model can interpret
+3. Maintain consistent depth of description across all prompts
+4. Use proper XML formatting with the specified tags
+5. Focus on visual elements rather than abstract concepts
+6. Consider lighting, composition, and mood in each description
+
+For each prompt you generate, you should include:
+- A clear main subject or action
+- Specific details about setting and environment
+- Relevant atmospheric elements (lighting, time of day, weather, etc.)
+- Important visual details that establish the scene
+
+Avoid:
+- Abstract or non-visual concepts
+- Vague or ambiguous descriptions
+- Mixing multiple interpretations within a single prompt
 """

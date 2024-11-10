@@ -20,14 +20,14 @@ from tqdm import tqdm
 # Loads .env file into environment variable; e.g. so we can access ANTHROPIC_API_KEY
 load_dotenv()
 
-# Get an Anthropic API key on your own from the Anthropic web console.
-# NOTE: I'm using Claude 3.5 Sonnet for now... but maybe we should try using an open-weights model like L3.1 8B Instruct via (eg) OpenRouter
-try:
-    anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-except KeyError:
-    raise ValueError(
-        "API key not found. Please set the ANTHROPIC_API_KEY environment variable."
-    )
+# # Get an Anthropic API key on your own from the Anthropic web console.
+# # NOTE: I'm using Claude 3.5 Sonnet for now... but maybe we should try using an open-weights model like L3.1 8B Instruct via (eg) OpenRouter
+# try:
+#     anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+# except KeyError:
+#     raise ValueError(
+#         "API key not found. Please set the ANTHROPIC_API_KEY environment variable."
+#     )
 
 # Replicate API token isn't needed explicitly (replicate client library accesses it via environment variable)
 # But if it's not present in the environment, we'd like to know about it.
@@ -45,6 +45,8 @@ except KeyError:
         "HUGGINGFACE_TOKEN not found. Please set the HUGGINGFACE_TOKEN environment variable."
     )
 
+SEED = 42
+
 
 class ImageCategory(Enum):
     """
@@ -59,22 +61,50 @@ class ImageCategory(Enum):
     DISTRACTOR = auto()
 
 
-def generate_image_prompts(compound: str) -> dict[ImageCategory, str]:
+class SentenceType(Enum):
+    IDIOMATIC = auto()
+    LITERAL = auto()
+
+
+# def generate_image_prompts(compound: str) -> dict[ImageCategory, str]:
+#     """
+#     Prompts the language model to create image generation prompts for the given compound and usage.
+#     """
+#     prompt = prompts.PROMPT_V1.format(COMPOUND=compound)
+#     response = anthropic_client.messages.create(
+#         model="claude-3-5-sonnet-20240620",
+#         messages=[{"role": "user", "content": prompt}],
+#         max_tokens=4096,
+#     )
+#     return extract_image_categories(response.content[0].text)
+
+
+# Attempt to replace with LLaMA 3.1 Instruct
+def generate_image_prompts_and_sentences(
+    compound: str,
+) -> tuple[dict[ImageCategory, str], dict[SentenceType, str]]:
     """
     Prompts the language model to create image generation prompts for the given compound and usage.
     """
-    prompt = prompts.PROMPT_V1.format(COMPOUND=compound)
-    response = anthropic_client.messages.create(
-        model="claude-3-5-sonnet-20240620",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=4096,
-    )
-    return extract_image_categories(response.content[0].text)
+    model_name = "meta/meta-llama-3-70b-instruct"
+    input = {
+        "prompt": prompts.USER_PROMPT.format(COMPOUND=compound),
+        "system_prompt": prompts.SYSTEM_PROMPT,
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "seed": SEED,
+    }
+
+    # Get response (Response is a list of strings)
+    response = replicate.run(model_name, input=input)
+    response_joined = "".join(response)
+
+    return extract_image_categories_and_sentences(response_joined)
 
 
-def extract_image_categories(
+def extract_image_categories_and_sentences(
     response: str, enhance_with_style: bool = False
-) -> dict[ImageCategory, str]:
+) -> tuple[dict[ImageCategory, str], dict[SentenceType, str]]:
     """
     Parses the chat response to extract the image categories and prompts.
     Args:
@@ -83,8 +113,8 @@ def extract_image_categories(
     Returns:
         A dictionary with (image category, prompt) items.
     """
-
-    category_prompts = {}
+    sentence_prompts: dict[SentenceType, str] = {}
+    category_prompts: dict[ImageCategory, str] = {}
     category_number_name_lookup = {
         1: ImageCategory.SYNONYM_IDIOMATIC,
         2: ImageCategory.SYNONYM_LITERAL,
@@ -93,13 +123,36 @@ def extract_image_categories(
         5: ImageCategory.DISTRACTOR,
     }
 
-    pattern = r"<category(\d)>(.*?)</category\1>"
-    matches = re.finditer(pattern, response, re.DOTALL)
+    # 1: Extract the example sentences for each interpretation
+    sentence_pattern = r"<(idiomatic|literal)_sentence>(.*?)</\1_sentence>"
+    sentence_matches = re.finditer(sentence_pattern, response, re.DOTALL)
+    for match in sentence_matches:
+        sentence_type = (
+            SentenceType.IDIOMATIC
+            if match.group(1) == "idiomatic"
+            else SentenceType.LITERAL
+        )
+        sentence = match.group(2).strip()
+        sentence_prompts[sentence_type] = sentence
 
-    for match in matches:
+    if len(sentence_prompts) != len(SentenceType):
+        raise ValueError(
+            f"Expected to find {len(SentenceType)} sentences, but found {len(sentence_prompts)}. Found sentences: {list(sentence_prompts.keys())}"
+        )
+
+    # 2: Extract the image prompts for each category
+    category_pattern = r"<category(\d)>(.*?)</category\1>"
+    category_matches = re.finditer(category_pattern, response, re.DOTALL)
+
+    for match in category_matches:
         category_num = int(match.group(1))
         prompt = match.group(2).strip()
         category_prompts[category_number_name_lookup[category_num]] = prompt
+
+    if len(category_prompts) != len(category_number_name_lookup):
+        raise ValueError(
+            f"Expected to find {len(category_number_name_lookup)} categories, but found {len(category_prompts)}. Found categories: {list(category_prompts.keys())}"
+        )
 
     # Optionally enhance the prompts with a randomly selected style modifier.
     if enhance_with_style:
@@ -109,7 +162,7 @@ def extract_image_categories(
             delimiter = " " if prompt.endswith((".", "!", "?")) else ". "
             category_prompts[category] = f"{prompt}{delimiter}{style_modifier}"
 
-    return category_prompts
+    return category_prompts, sentence_prompts
 
 
 def _generate_image(prompt: str) -> bytes:
@@ -142,6 +195,7 @@ def generate_images(
 
 def create_dataset_entries(
     compound: str,
+    sentences: dict[SentenceType, str],
     category_prompts: dict[ImageCategory, str],
     generated_images: dict[ImageCategory, bytes],
 ) -> dict:
@@ -149,6 +203,7 @@ def create_dataset_entries(
     Creates a dictionary entry for the dataset.
     Args:
         compound: The compound to use for the dataset entry.
+        sentences: The sentences to use for the dataset entry.
         category_prompts: The category prompts to use for the dataset entry.
         generated_images: The generated images to use for the dataset entry (still in byte form)
     """
@@ -169,8 +224,8 @@ def create_dataset_entries(
         ImageCategory.DISTRACTOR,
     ]
 
-    literal_sentence = "LITERAL PLACEHOLDER"  # generate_sentence(compound, idiom_type="literal")  # TODO: Implement this. Probably not here either. This should just be assembly, so pass it in as args.
-    idiomatic_sentence = "IDIOMATIC PLACEHOLDER"  # generate_sentence(compound, idiom_type="idiomatic")  # TODO: Implement this. Probably not here either. This should just be assembly, so pass it in as args.
+    literal_sentence = sentences[SentenceType.LITERAL]
+    idiomatic_sentence = sentences[SentenceType.IDIOMATIC]
 
     # Create two entries for our dataset, one for each interpretation of the idiom
     for sentence, ordering_rules, sentence_type in zip(
@@ -186,7 +241,7 @@ def create_dataset_entries(
         ]
 
         # ID will be added later, once all entries have been assembled.
-        # image_1 is the most relevant, based on the ordering rules
+        # NOTE: image_1 is the most relevant, based on the ordering rules
         entries.append(
             {
                 "compound": compound,
@@ -224,13 +279,13 @@ def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
         total=len(compounds),
     ):
         # Generate the prompts for our compound, for each of the 5 image categories
-        prompts = generate_image_prompts(compound)
+        prompts, sentences = generate_image_prompts_and_sentences(compound)
 
         # Generate an image for each of the 5 categories
         images = generate_images(prompts)
 
         # Create two entries for our dataset, one for each interpretation of the idiom
-        entries = create_dataset_entries(compound, prompts, images)
+        entries = create_dataset_entries(compound, sentences, prompts, images)
 
         dataset_entries.extend(entries)
 
@@ -305,7 +360,7 @@ def get_compounds() -> list[str]:
     return compounds
 
 
-if __name__ == "__main__":
+def main():
     # Get compounds
     compounds = get_compounds()
 
@@ -313,3 +368,7 @@ if __name__ == "__main__":
     dataset = create_and_push_dataset(compounds)
 
     print("Done!")
+
+
+if __name__ == "__main__":
+    main()
