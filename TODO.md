@@ -24,3 +24,7 @@ Desired columns
 
 The question is whether we want to have two rows, one for for each interpretation of each idiom?
 Seems like a bit of duplicated data, but HuggingFace allows for us to store a shit ton of data, so it's no worry.
+
+
+Rate limit notes
+- Replicate: You can create predictions at 600 requests per minute. All other endpoints you can call at 3000 requests per minute.
