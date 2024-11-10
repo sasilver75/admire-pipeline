@@ -275,7 +275,7 @@ def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
 
     for compound in tqdm(
         compounds,
-        desc="Generating prompts and images for compounds",
+        desc=f"Generating prompts and images for {len(compounds)} compounds",
         total=len(compounds),
     ):
         # Generate the prompts for our compound, for each of the 5 image categories
@@ -294,8 +294,7 @@ def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
         entry["id"] = i
 
     # Create the Dataset object from our list of dictionaries.
-    print(f"Debug - type of first image: {type(dataset_entries[0]['image_1'])}")
-    # Tells PyArrow what to expect for each column
+    # Tells PyArrow what to expect for each column (We'll create a Parquet from Arrow format)
     features = Features(
         {
             "id": Value("int32"),
