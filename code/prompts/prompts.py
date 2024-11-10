@@ -4,13 +4,12 @@ using the corresponding version numbers of the prompt prompts.
 """
 
 PROMPT_V1 = """
-You are tasked with generating prompts for an image generation model based on a given compound phrase and its usage. Your goal is to create five distinct prompts, each corresponding to a specific image category. These prompts should be designed to produce images that clearly represent their respective categories.
+You are tasked with generating prompts for an image generation model based on a given compound phrase. Your goal is to create five distinct prompts, each corresponding to a specific image category. These prompts should be designed to produce images that clearly represent their respective categories.
 
 Input variables:
 <compound>{COMPOUND}</compound>
-<usage>{USAGE}</usage>
 
-The compound is a phrase that can have both a literal and an idiomatic meaning. The usage specifies whether to focus on the literal or idiomatic interpretation of the compound.
+The compound is a phrase that can be interpreted to have both a literal and an idiomatic meaning.
 
 Generate prompts for the following five image categories:
 
@@ -21,7 +20,7 @@ Generate prompts for the following five image categories:
 5. A distractor, which belongs to the same category as the compound (e.g., an object or activity) but is unrelated to both the literal and idiomatic meanings.
 
 For each category, follow these steps:
-1. Analyze the compound and its usage to determine the appropriate interpretation.
+1. Analyze the compound to determine the appropriate interpretation.
 2. Brainstorm potential content that fits the category's requirements.
 3. Develop a detailed image generation prompt that includes:
    a. A clear description of the main subject or action
@@ -75,5 +74,5 @@ A vibrant farmers' market scene with colorful stalls selling fresh produce. In t
 </category5>
 </prompts>
 
-Remember to tailor your prompts to the specific compound and usage provided, ensuring that each category is clearly represented and distinct from the others.
+Remember to tailor your prompts to the specific provided compound phrase, ensuring that each category is clearly represented and distinct from the others.
 """

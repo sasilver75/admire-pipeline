@@ -1,0 +1,2 @@
+[] Why does our prompt even ask for usage? We're going to be using the same prompt for both literal and idiomatic images, aren't we? For the finetuning, the thing that will differ is the sentence that is given as example (from which the VLM has to determine the sentence type, to then determine the ranking of images).
+[] Should we ask the LM in the prompt to first generate an idiomatic and a literal usage? We can multi-shot prompt this using the examples from the training set.
