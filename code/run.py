@@ -14,6 +14,7 @@ import replicate.helpers
 from datasets import Dataset, Features, Image, Value
 from dotenv import load_dotenv
 from tqdm.asyncio import tqdm as atqdm
+import httpx
 
 # Load environment variables
 load_dotenv()
@@ -77,12 +78,14 @@ class ImageItem(NamedTuple):
 
 
 class TokenBucket:
-    def __init__(self, rate: float, capacity: int):
+    def __init__(self, rate: float, capacity: int, report_every: int | None = None):
         self.rate = rate
         self.capacity = capacity
         self.tokens = capacity
         self.last_update = time.time()
         self.lock = asyncio.Lock()
+        self.request_count = 0  # I can't imagine that this would realistically overflow
+        self.report_every = report_every
 
     async def acquire(self):
         """Acquire a token, waiting if necessary."""
@@ -106,12 +109,90 @@ class TokenBucket:
 
             # "Spend" a token
             self.tokens -= 1
+            self.request_count += 1
 
+            if self.report_every and self.request_count % self.report_every == 0:
+                print(f"TokenBucket request count: {self.request_count}")
 
 # Replicate limit of 600 requests per minute = 10 requests per second
 # I'm setting the capacity to 500, just so that we don't accidentally trip the rate limit somehow.
-RATE_LIMITER = TokenBucket(rate=10, capacity=500)
+RATE_LIMITER = TokenBucket(rate=10, capacity=500, report_every=50)
+MAX_RETRIES = 10
 
+
+import requests
+from tenacity import retry, stop_after_attempt, retry_if_exception_type, RetryCallState
+
+def log_retry_attempt(retry_state: RetryCallState):
+    """Custom callback to print retry information."""
+    exception = retry_state.outcome.exception()
+
+    model_name = retry_state.args[0] if retry_state.args else "Unknown model"
+    model_input = retry_state.args[1] if retry_state.args and len(retry_state.args) > 1 else "Unknown input"
+
+    print(f"\nRetry attempt {retry_state.attempt_number}/{MAX_RETRIES} for request to model {model_name} with input {model_input} after error: {str(exception)}")
+
+@retry(
+    retry=retry_if_exception_type((
+        httpx.HTTPError,  # Network/HTTP errors
+        replicate.exceptions.ReplicateError,   # Replicate-specific errors
+    )),
+    stop=stop_after_attempt(MAX_RETRIES),
+    before_sleep=log_retry_attempt
+)
+async def _replicate_run_with_retry(model_name: str, input: dict):
+    """
+    Truly async wrapper around replicate API calls using httpx.
+    This uses the replicate prediction apis directly, rather than replicate.run
+    This involves creating a prediction and then polling for its result.
+    A KeyError here would be unexpected, and shouldn't trigger the retry logic.
+    See: https://replicate.com/docs/topics/predictions/create-a-prediction
+    """
+    # Get your token from replicate client
+    token = os.environ["REPLICATE_API_TOKEN"]
+    
+    prediction_url = f"https://api.replicate.com/v1/models/{model_name}/predictions"
+    async with httpx.AsyncClient() as client:
+        
+        # Make the API call directly
+        await RATE_LIMITER.acquire()
+        response = await client.post(
+            prediction_url,
+            json={"input": input},
+            headers={"Authorization": f"Token {token}"}
+        )
+        response.raise_for_status()
+        
+        # Determine the URL to call to poll for the result of the prediction
+        result_url = response.json()["urls"]["get"]
+
+        # We might expect that we can safely wait 2 seconds before beginning polling
+        await asyncio.sleep(2)
+        
+        # Poll for results (Adding a while true counter because while True loops scare me)
+        while_true_counter = 0
+        while True:
+            while_true_counter += 1
+            
+            # Make the call for result
+            await RATE_LIMITER.acquire()
+            result = await client.get(
+                result_url,
+                headers={"Authorization": f"Token {token}"}
+            )
+            result.raise_for_status()
+            data = result.json()
+            
+            if data["status"] == "succeeded":
+                return data["output"]
+            elif data["status"] == "failed":
+                # ReplicateError here will trigger the Tenacity retry logic
+                raise replicate.exceptions.ReplicateError(f"Prediction failed: {data.get('error')}")
+            
+            await asyncio.sleep(.5)  # Poll every 0.5 seconds, but exponentially back off if we keep missing the condition
+            
+            if while_true_counter > 100:
+                raise Exception("While true loop counter exceeded 100. This is unexpected.")
 
 async def generate_image_prompts_and_sentences(
     compound: CompoundItem, additional_styles: int = 0
@@ -138,11 +219,8 @@ async def generate_image_prompts_and_sentences(
         "seed": SEED,
     }
 
-    # Wait for a token before making the API call
-    await RATE_LIMITER.acquire()
-
-    # Get response (Response is a list of strings)
-    response = replicate.run(model_name, input=input)
+    # Get response
+    response: list[str] = await _replicate_run_with_retry(model_name, input)
     response_joined = "".join(response)
 
     return extract_image_categories_and_sentences(
@@ -233,18 +311,30 @@ def extract_image_categories_and_sentences(
 
     return category_prompts, sentence_prompts
 
+@retry(
+    retry=retry_if_exception_type((requests.exceptions.RequestException, replicate.exceptions.ReplicateError)),
+    stop=stop_after_attempt(MAX_RETRIES),
+    before_sleep=log_retry_attempt
+)
+async def _get_image_content_with_retry(image_url: str) -> bytes:
+    """Download an image from a given URL, retrying if necessary."""
+    await RATE_LIMITER.acquire()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(image_url)
+        response.raise_for_status()
+        return response.content  # Image bytes
 
 async def _generate_image(prompt: str) -> bytes:
-    """Asynchronously generate an image for the given prompt."""
+    """Asynchronously generate an image for the given prompt and retrieve its bytes."""
     model_name = "black-forest-labs/flux-schnell"
     model_input = {"prompt": prompt}
 
-    # Wait for a token before making the API call
-    await RATE_LIMITER.acquire()
-
-    response = replicate.run(model_name, input=model_input)
-    file_output: replicate.helpers.FileOutput = response[0]
-    return file_output.read()
+    # Generate the image, and get the URL of the image on Replicate
+    response = await _replicate_run_with_retry(model_name, model_input)
+    image_url = response[0] # e.g. 'https://replicate.delivery/xezq/27RvrzI5uxoCEJmjP8eZf4b5bnO1lrxfXMLIiCjeemAUcYAeE/out-0.webp'
+    
+    image_bytes = await _get_image_content_with_retry(image_url)
+    return image_bytes
 
 
 async def generate_images(
@@ -481,6 +571,7 @@ def get_compounds() -> list[CompoundItem]:
     compounds = []
 
     # Load compounds for each language, and accumulate them into `compounds`
+    skipped_languages = []
     for language in LanguageType:
         filepath = f"data/{language.value}_idioms.txt"
         if os.path.exists(filepath):
@@ -491,13 +582,14 @@ def get_compounds() -> list[CompoundItem]:
                     if line.strip()
                 ]
                 compounds.extend(language_compounds)
+                print(f"Idiom file found for {language} with {len(language_compounds)} idioms.")
         else:
             # Let's skip languages that don't have an idiom file.
             print(
-                f"Warning: Idiom file {filepath} not found for language {language}. Skipping language."
+                f"Warning: Idiom file not found for language {language} at {filepath}. Skipping language."
             )
-
-    print(f"Loaded {len(compounds)} compounds across {len(LanguageType)} languages.")
+            skipped_languages.append(language)
+    print(f"Found {len(compounds)} compounds across {len(LanguageType) - len(skipped_languages)} languages. Skipped languages: {[lang.value for lang in skipped_languages]}")
     return compounds
 
 
@@ -505,11 +597,11 @@ async def main():
     """Main async function."""
     # Determines how many style variations to generate for each idiom, and how many records are generated.
     # If you have 2 compounds, and you set additional_styles=3, then you'll get 2 compounds * 2 interpretations * 3 styles = 12 records in the dataset.
-    additional_styles = 2
+    additional_styles = 0
 
     compounds = get_compounds()
     # # TESTING DELETE THIS BELOW
-    # compounds = compounds[:2]  # Just test the first two idioms for now
+    compounds = compounds[:2]  # Just test the first two idioms for now
     # # TESTING DELETE THIS ABOVE
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
