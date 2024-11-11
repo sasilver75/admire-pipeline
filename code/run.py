@@ -116,7 +116,7 @@ class TokenBucket:
 
 # Replicate limit of 600 requests per minute = 10 requests per second
 # I'm setting the capacity to 500, just so that we don't accidentally trip the rate limit somehow.
-RATE_LIMITER = TokenBucket(rate=10, capacity=500, report_every=50)
+RATE_LIMITER = TokenBucket(rate=10, capacity=500, report_every=500)
 MAX_RETRIES = 10
 
 
@@ -166,8 +166,8 @@ async def _replicate_run_with_retry(model_name: str, input: dict):
         # Determine the URL to call to poll for the result of the prediction
         result_url = response.json()["urls"]["get"]
 
-        # We might expect that we can safely wait 2 seconds before beginning polling
-        await asyncio.sleep(2)
+        # We might expect that we can safely wait 3 seconds before beginning polling
+        await asyncio.sleep(3)
         
         # Poll for results (Adding a while true counter because while True loops scare me)
         while_true_counter = 0
@@ -189,7 +189,9 @@ async def _replicate_run_with_retry(model_name: str, input: dict):
                 # ReplicateError here will trigger the Tenacity retry logic
                 raise replicate.exceptions.ReplicateError(f"Prediction failed: {data.get('error')}")
             
-            await asyncio.sleep(.5)  # Poll every 0.5 seconds, but exponentially back off if we keep missing the condition
+            # POLLING INTERVAL
+            poll_interval = 2
+            await asyncio.sleep(poll_interval)  # Poll every {poll_interval} seconds, but exponentially back off if we keep missing the condition
             
             if while_true_counter > 100:
                 raise Exception("While true loop counter exceeded 100. This is unexpected.")
@@ -487,6 +489,8 @@ async def create_and_push_dataset(
     Returns:
         The created Dataset object.
     """
+    print(f"Given{len(compounds)} compounds and {additional_styles} styles per compound, this is {len(compounds)} expected language model requests and {len(compounds)}*{additional_styles}*5 = {len(compounds)*additional_styles*5} expected diffusion model requests, plus additional prediction creation and polling requests (which don't cost money)")
+
     dataset_entries = []
 
     # Process all compounds concurrently with progress bar (Note that the process will seem to "jump", since tasks launched at the same time will likely complete at roughly the same time. It's not a smooth progress bar.)
@@ -497,7 +501,7 @@ async def create_and_push_dataset(
     for coro in atqdm(
         asyncio.as_completed(tasks),
         total=len(compounds),
-        desc=f"Processing {len(compounds)} compounds into {len(compounds) * 2 * additional_styles} records",
+        desc=f"Processing {len(compounds)} compounds into {len(compounds) * additional_styles * 2} records",
     ):
         entries = await coro
         dataset_entries.extend(entries)
@@ -597,11 +601,11 @@ async def main():
     """Main async function."""
     # Determines how many style variations to generate for each idiom, and how many records are generated.
     # If you have 2 compounds, and you set additional_styles=3, then you'll get 2 compounds * 2 interpretations * 3 styles = 12 records in the dataset.
-    additional_styles = 0
+    additional_styles = 2
 
     compounds = get_compounds()
     # # TESTING DELETE THIS BELOW
-    compounds = compounds[:2]  # Just test the first two idioms for now
+    compounds = compounds[:100]  # Just test the first few idioms for now
     # # TESTING DELETE THIS ABOVE
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
