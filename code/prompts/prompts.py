@@ -34,8 +34,9 @@ For each category, follow these steps:
    b. Relevant details about the setting, style, or mood
    c. Any specific visual elements that should be included
 
-It's important that despite the language of the compound provided in the <language> tags above, you generate the image generation prompts in English.
-   
+Consider that the downstream image-generation model that will be used to generate images for this task will only understand English, so generate your image prompts in English, regardless of the langauge in the <language> tags above.
+Consider also that the downstream image-generation model is limited in capabilities, so make your prompts as detailed as possible to help the model generate a good image, leaving little to interpretation when it comes to the content of the image.
+
 Present your output in the following format:
 
 <idiomatic_sentence>
@@ -71,7 +72,7 @@ Additional guidelines:
 - For the "related" categories (3 and 4), think creatively about associations that are not direct synonyms.
 - For the distractor category, choose something that is thematically unrelated but belongs to the same broad category (e.g., object, action, or concept) as the compound.
 
-Example output format for "burning the midnight oil" (do not use this content, it's just to illustrate the structure):
+Example output format for "burning the midnight oil" (do not use this content, it's just to illustrate the structure. The prompts you generate should be more high-quality and descriptive):
 
 <idiomatic_sentence>
 The medical student was burning the midnight oil as she prepared for her final exams.
