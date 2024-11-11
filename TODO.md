@@ -1,4 +1,12 @@
 
+[] Add retries, etc.
+[] Get some portuguese idioms
+[] Merge in the english idioms from the dataset
+[] Prompt needs improvement re: materialization of reasoning of what the prompt should look like. We had some bad reuslts for (eg) a bird in the hand is worth two in the bush.
+[] Question: Should we determine whether a compound OUGHT to have both interpretations?
+[] Question: Should we try injecting the style differently?
+[] TODO: Look for what some good Flux prompts look like. Note that "good" doesn't mean artistic. We just want control and minimal diffusion artifacts.
+
 
 Notes
 - It doesn't seem that HF has a limit on the number of datasets that can be created, and it seems like a dataset can be 300GB without needing permission (free).
