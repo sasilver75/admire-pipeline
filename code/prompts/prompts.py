@@ -20,10 +20,14 @@ Generate prompts for the following five image categories:
 5. A distractor, which belongs to the same category as the compound (e.g., an object or activity) but is unrelated to both the literal and idiomatic meanings.
 
 First, generate an example sentence showing the compound in use under each interpretation (idiomatic, literal).
+- It's okay to perform some minor conjugation of the compound -- e.g., "burying the hatchet" could be used as "bury the hatchet" or "buried the hatchet".
+
+For the literal interpretations (either for the prompts or the example sentence), it's okay if the sentence is a bit contrived or absurd as a result of the difficulty of literally interpreting the compound.
+For example "shooting the breeze" could be literally interpreted as shooting a gun at the wind (e.g., "the drunken farmer was shooting the breeze from his porch"), even though it's a somewhat absurd situation.
 
 For each category, follow these steps:
 1. Analyze the compound to determine the appropriate interpretation, based on the image category.
-2. Brainstorm potential content that fits the category's requirements.
+2. Brainstorm potential content that fits the category's requirements. For compounds for which it's difficult to come up with a good literal interpretation, give your best effort to generate one, thinking creatively.
 3. Develop a detailed image generation prompt that includes:
    a. A clear description of the main subject or action
    b. Relevant details about the setting, style, or mood
