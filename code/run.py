@@ -1,58 +1,35 @@
-import base64
-import io
+import asyncio
 import os
 import random
 import re
+import time
 from datetime import datetime
 from enum import Enum, auto
+from typing import NamedTuple
 
-import anthropic
 import prompts.prompts as prompts
 import prompts.styles as styles
 import replicate
 import replicate.helpers
-from datasets import Dataset, Features
-from datasets import Image as HFImage
-from datasets import Value
+from datasets import Dataset, Features, Image, Value
 from dotenv import load_dotenv
-from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
 
-# Loads .env file into environment variable; e.g. so we can access ANTHROPIC_API_KEY
+# Load environment variables
 load_dotenv()
 
-# # Get an Anthropic API key on your own from the Anthropic web console.
-# # NOTE: I'm using Claude 3.5 Sonnet for now... but maybe we should try using an open-weights model like L3.1 8B Instruct via (eg) OpenRouter
-# try:
-#     anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-# except KeyError:
-#     raise ValueError(
-#         "API key not found. Please set the ANTHROPIC_API_KEY environment variable."
-#     )
-
-# Replicate API token isn't needed explicitly (replicate client library accesses it via environment variable)
-# But if it's not present in the environment, we'd like to know about it.
-try:
-    os.environ["REPLICATE_API_TOKEN"]
-except KeyError:
-    raise ValueError(
-        "REPLICATE_API_TOKEN not found. Please set the REPLICATE_API_TOKEN environment variable."
-    )
-
-try:
-    os.environ["HUGGINGFACE_TOKEN"]
-except KeyError:
-    raise ValueError(
-        "HUGGINGFACE_TOKEN not found. Please set the HUGGINGFACE_TOKEN environment variable."
-    )
+# Verify required environment variables
+for env_var in ["REPLICATE_API_TOKEN", "HUGGINGFACE_TOKEN"]:
+    if env_var not in os.environ:
+        raise ValueError(
+            f"{env_var} not found. Please set the {env_var} environment variable."
+        )
 
 SEED = 42
 
 
 class ImageCategory(Enum):
-    """
-    The categories of images that the language model will be prompted to generate captions for.
-    The auto() function automatically assigns unique monotically-increasing integer values to each enum member.
-    """
+    """Categories of images for language model caption generation."""
 
     SYNONYM_IDIOMATIC = auto()
     SYNONYM_LITERAL = auto()
@@ -62,29 +39,77 @@ class ImageCategory(Enum):
 
 
 class SentenceType(Enum):
+    """Types of sentences (idiomatic vs literal)."""
+
     IDIOMATIC = auto()
     LITERAL = auto()
 
 
-# def generate_image_prompts(compound: str) -> dict[ImageCategory, str]:
-#     """
-#     Prompts the language model to create image generation prompts for the given compound and usage.
-#     """
-#     prompt = prompts.PROMPT_V1.format(COMPOUND=compound)
-#     response = anthropic_client.messages.create(
-#         model="claude-3-5-sonnet-20240620",
-#         messages=[{"role": "user", "content": prompt}],
-#         max_tokens=4096,
-#     )
-#     return extract_image_categories(response.content[0].text)
+class PromptItem(NamedTuple):
+    """A single prompt for an image category, with style modifier."""
+
+    prompt: str
+    style_modifier: str
 
 
-# Attempt to replace with LLaMA 3.1 Instruct
-def generate_image_prompts_and_sentences(
-    compound: str,
-) -> tuple[dict[ImageCategory, str], dict[SentenceType, str]]:
+class ImageItem(NamedTuple):
+    """A single image for an image category, with prompt and style modifier."""
+
+    prompt: str
+    style_modifier: str
+    image: bytes
+
+
+class TokenBucket:
+    def __init__(self, rate: float, capacity: int):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.time()
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Acquire a token, waiting if necessary."""
+        async with self.lock:
+            # Add new tokens based on time passed since last acquire call
+            now = time.time()
+            new_tokens = (now - self.last_update) * self.rate
+            self.tokens = min(self.capacity, self.tokens + new_tokens)
+            self.last_update = now
+
+            # If we need tokens, wait for them to be added, then update token counts
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) / self.rate
+                print(f"No tokens available; waiting {wait_time:.2f} seconds...")
+                await asyncio.sleep(wait_time)
+                # Recalculate tokens after sleep
+                now = time.time()
+                new_tokens = (now - self.last_update) * self.rate
+                self.tokens = min(self.capacity, new_tokens)
+                self.last_update = now
+
+            # "Spend" a token
+            self.tokens -= 1
+
+
+# Replicate limit of 600 requests per minute = 10 requests per second
+# I'm setting the capacity to 500, just so that we don't accidentally trip the rate limit somehow.
+RATE_LIMITER = TokenBucket(rate=10, capacity=500)
+
+
+async def generate_image_prompts_and_sentences(
+    compound: str, additional_styles: int = 0
+) -> tuple[dict[ImageCategory, list[PromptItem]], dict[SentenceType, str]]:
     """
-    Prompts the language model to create image generation prompts for the given compound and usage.
+    Asynchronously generate image prompts and sentences using LLaMA.
+    Args:
+        compound: The compound to generate prompts and sentences for.
+    Returns:
+        A tuple of dictionaries:
+            - The first containing (image category, promptList) pairs.
+                - If extract_image_categories_and_sentences is called with enhance_with_styles=True,
+                then the promptList will have multiple prompsts, each sharing the same base "content" but with different style modifiers.
+            - The second containing (sentence type, sentence) pairs.
     """
     model_name = "meta/meta-llama-3-70b-instruct"
     input = {
@@ -95,16 +120,21 @@ def generate_image_prompts_and_sentences(
         "seed": SEED,
     }
 
+    # Wait for a token before making the API call
+    await RATE_LIMITER.acquire()
+
     # Get response (Response is a list of strings)
     response = replicate.run(model_name, input=input)
     response_joined = "".join(response)
 
-    return extract_image_categories_and_sentences(response_joined)
+    return extract_image_categories_and_sentences(
+        response_joined, additional_styles=additional_styles
+    )
 
 
 def extract_image_categories_and_sentences(
-    response: str, enhance_with_style: bool = False
-) -> tuple[dict[ImageCategory, str], dict[SentenceType, str]]:
+    response: str, additional_styles: int = 0
+) -> tuple[dict[ImageCategory, list[PromptItem]], dict[SentenceType, str]]:
     """
     Parses the chat response to extract the image categories and prompts.
     Args:
@@ -114,7 +144,7 @@ def extract_image_categories_and_sentences(
         A dictionary with (image category, prompt) items.
     """
     sentence_prompts: dict[SentenceType, str] = {}
-    category_prompts: dict[ImageCategory, str] = {}
+    category_prompts: dict[ImageCategory, list[PromptItem]] = {}
     category_number_name_lookup = {
         1: ImageCategory.SYNONYM_IDIOMATIC,
         2: ImageCategory.SYNONYM_LITERAL,
@@ -147,68 +177,127 @@ def extract_image_categories_and_sentences(
     for match in category_matches:
         category_num = int(match.group(1))
         prompt = match.group(2).strip()
-        category_prompts[category_number_name_lookup[category_num]] = prompt
+        prompt_item = PromptItem(prompt=prompt, style_modifier="<NONE>")
+        category_prompts[category_number_name_lookup[category_num]] = [prompt_item]
 
     if len(category_prompts) != len(category_number_name_lookup):
         raise ValueError(
             f"Expected to find {len(category_number_name_lookup)} categories, but found {len(category_prompts)}. Found categories: {list(category_prompts.keys())}"
         )
 
-    # Optionally enhance the prompts with a randomly selected style modifier.
-    if enhance_with_style:
-        style_modifier = f"Generate an image in the following style: {random.choice(styles.STYLE_MODIFIERS)}"
-        for category in category_prompts:
-            prompt = category_prompts[category]
-            delimiter = " " if prompt.endswith((".", "!", "?")) else ". "
-            category_prompts[category] = f"{prompt}{delimiter}{style_modifier}"
+    # 3: Optionally enhance the image prompts with the desired number of randomly-selected style modifiers.
+    if additional_styles:
+        # Sample N additional styles without replacement
+        if additional_styles > len(styles.STYLE_MODIFIERS):
+            print(
+                f"Warning: requested {additional_styles} additional styles, but only {len(styles.STYLE_MODIFIERS)} styles are available. Using all {len(styles.STYLE_MODIFIERS)} styles."
+            )
+        style_modifiers = random.sample(
+            styles.STYLE_MODIFIERS, min(additional_styles, len(styles.STYLE_MODIFIERS))
+        )
+
+        for style_modifier in style_modifiers:
+            for category in category_prompts:
+                base_prompt = category_prompts[category][0].prompt
+                delimiter = " " if base_prompt.endswith((".", "!", "?")) else ". "
+                style_modifier_phrase = (
+                    f"Generate the image in the following style: {style_modifier}."
+                )
+                prompt_item = PromptItem(
+                    prompt=f"{base_prompt}{delimiter}{style_modifier_phrase}",
+                    style_modifier=style_modifier,
+                )
+                category_prompts[category].append(prompt_item)
 
     return category_prompts, sentence_prompts
 
 
-def _generate_image(prompt: str) -> bytes:
-    """
-    Generates an image for the given prompt.
-    Returns the image as bytes instead of showing it.
-    """
+async def _generate_image(prompt: str) -> bytes:
+    """Asynchronously generate an image for the given prompt."""
     model_name = "black-forest-labs/flux-schnell"
-    # TODO: What other hyperparameters can we set or fix? Surely random_seed is an important one for reproducibility?
     model_input = {"prompt": prompt}
 
-    response = replicate.run(model_name, input=model_input)
+    # Wait for a token before making the API call
+    await RATE_LIMITER.acquire()
 
-    # Unpack the single replicate.helpers.FileOutput object in the list
+    response = replicate.run(model_name, input=model_input)
     file_output: replicate.helpers.FileOutput = response[0]
     return file_output.read()
 
 
-def generate_images(
-    category_prompts: dict[ImageCategory, str]
-) -> dict[ImageCategory, bytes]:
+async def generate_images(
+    category_prompts: dict[ImageCategory, list[PromptItem]]
+) -> dict[ImageCategory, list[ImageItem]]:
     """
-    Generates images for the given category prompts.
+    Asynchronously generate images for all category prompts.
+    Args:
+        category_prompts: A dictionary of (image category, list of PromptItem) pairs.
+    Returns:
+        A dictionary of (image category, list of ImageItem) pairs.
     """
-    generated_images = {}
-    for category, prompt in category_prompts.items():
-        generated_images[category] = _generate_image(prompt)
-    return generated_images
+    # Create a flat list of tasks and keep track of which category/index they belong to
+    tasks = []
+    task_metadata = []  # Store (category, index, prompt_item) for each task
+
+    for category, prompt_list in category_prompts.items():
+        for idx, prompt_item in enumerate(prompt_list):
+            tasks.append(_generate_image(prompt_item.prompt))
+            task_metadata.append((category, idx, prompt_item))
+
+    # Run all image generation tasks concurrently
+    images = await asyncio.gather(*tasks)
+
+    # Reconstruct the dictionary structure
+    result: dict[ImageCategory, list[ImageItem]] = {}
+    for (category, idx, prompt_item), image in zip(task_metadata, images):
+        if category not in result:
+            result[category] = []
+        result[category].append(
+            ImageItem(
+                prompt=prompt_item.prompt,
+                style_modifier=prompt_item.style_modifier,
+                image=image,
+            )
+        )
+
+    return result
+
+
+async def process_compound(compound: str, additional_styles: int = 0) -> list[dict]:
+    """
+    Process a single compound asynchronously.
+    Args:
+        compound: The compound to process.
+    Returns:
+        A list of dataset entries for the compound.
+    """
+    # Generate prompts and sentences
+    prompts, sentences = await generate_image_prompts_and_sentences(
+        compound, additional_styles=additional_styles
+    )
+
+    # Generate images
+    image_items: dict[ImageCategory, list[ImageItem]] = await generate_images(prompts)
+
+    # Create dataset entries
+    return create_dataset_entries(compound, sentences, image_items)
 
 
 def create_dataset_entries(
     compound: str,
     sentences: dict[SentenceType, str],
-    category_prompts: dict[ImageCategory, str],
-    generated_images: dict[ImageCategory, bytes],
-) -> dict:
+    image_items: dict[ImageCategory, list[ImageItem]],
+) -> list[dict]:
     """
     Creates a dictionary entry for the dataset.
     Args:
         compound: The compound to use for the dataset entry.
         sentences: The sentences to use for the dataset entry.
-        category_prompts: The category prompts to use for the dataset entry.
-        generated_images: The generated images to use for the dataset entry (still in byte form)
+        image_items: The image items to use for the dataset entry, which each contain the image bytes along with the prompt and style modifier.
     """
     entries = []
 
+    # Define the two orderings of image categories, based on sentence type
     idiomatic_ordering = [
         ImageCategory.SYNONYM_IDIOMATIC,
         ImageCategory.RELATED_IDIOMATIC,
@@ -224,103 +313,113 @@ def create_dataset_entries(
         ImageCategory.DISTRACTOR,
     ]
 
+    # Unpack the literal and idiomatic sentences
     literal_sentence = sentences[SentenceType.LITERAL]
     idiomatic_sentence = sentences[SentenceType.IDIOMATIC]
 
-    # Create two entries for our dataset, one for each interpretation of the idiom
-    for sentence, ordering_rules, sentence_type in zip(
-        [literal_sentence, idiomatic_sentence],
-        [literal_ordering, idiomatic_ordering],
-        ["literal", "idiomatic"],
-    ):
-        ordered_images: list[HFImage] = [
-            generated_images[category] for category in ordering_rules
-        ]
-        ordered_prompts: list[str] = [
-            category_prompts[category] for category in ordering_rules
-        ]
+    num_styles = len(
+        next(iter(image_items.values()))
+    )  # Get the number of styles that were generated
 
-        # ID will be added later, once all entries have been assembled.
-        # NOTE: image_1 is the most relevant, based on the ordering rules
-        entries.append(
-            {
-                "compound": compound,
-                "sentence_type": sentence_type,
-                "sentence": sentence,
-                "image_1_prompt": ordered_prompts[0],
-                "image_1": ordered_images[0],
-                "image_2_prompt": ordered_prompts[1],
-                "image_2": ordered_images[1],
-                "image_3_prompt": ordered_prompts[2],
-                "image_3": ordered_images[2],
-                "image_4_prompt": ordered_prompts[3],
-                "image_4": ordered_images[3],
-                "image_5_prompt": ordered_prompts[4],
-                "image_5": ordered_images[4],
-            }
-        )
+    # For each style variation...
+    for style_idx in range(num_styles):
+        # Get the style modifier (same across all image categories at this index)
+        style = next(iter(image_items.values()))[style_idx].style_modifier
+
+        # Create two entries for our dataset, one for each interpretation of the idiom (under this style)
+        for sentence, ordering_rules, sentence_type in zip(
+            [literal_sentence, idiomatic_sentence],
+            [literal_ordering, idiomatic_ordering],
+            ["literal", "idiomatic"],
+        ):
+            # Get the style_idx'th item from each category in the correct order
+            ordered_items = [
+                image_items[category][style_idx] for category in ordering_rules
+            ]
+
+            # Create the entry: Note that image_1 is the most relevant, based on the ordering rules for the sentence type
+            entries.append(
+                {
+                    "compound": compound,
+                    "sentence_type": sentence_type,
+                    "sentence": sentence,
+                    "style": style,
+                    "image_1_prompt": ordered_items[0].prompt,
+                    "image_2_prompt": ordered_items[1].prompt,
+                    "image_3_prompt": ordered_items[2].prompt,
+                    "image_4_prompt": ordered_items[3].prompt,
+                    "image_5_prompt": ordered_items[4].prompt,
+                    "image_1": ordered_items[0].image,
+                    "image_2": ordered_items[1].image,
+                    "image_3": ordered_items[2].image,
+                    "image_4": ordered_items[3].image,
+                    "image_5": ordered_items[4].image,
+                }
+            )
 
     return entries
 
 
-def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
+async def create_and_push_dataset(
+    compounds: list[str], additional_styles: int = 0, push_to_hub: bool = True
+):
     """
-    Creates a dataset from multiple compounds and optionally pushes it to HuggingFace Hub.
-
+    Asynchronously create dataset from multiple compounds.
+    The top-level function that orchestrates the process.
     Args:
         compounds: The compounds to use for the dataset.
-        push_to_hub: Whether to push the dataset to HuggingFace Hub. It's likely you want to do this; the filename includes the Datetime, so we won't overwrite anything.
+        push_to_hub: Whether to push the dataset to the HuggingFace Hub.
+    Returns:
+        The created Dataset object.
     """
-    dataset_entries: list[dict] = []
+    dataset_entries = []
 
-    for compound in tqdm(
-        compounds,
-        desc=f"Generating prompts and images for {len(compounds)} compounds",
+    # Process all compounds concurrently with progress bar (Note that the process will seem to "jump", since tasks launched at the same time will likely complete at roughly the same time. It's not a smooth progress bar.)
+    tasks = [
+        process_compound(compound, additional_styles=additional_styles)
+        for compound in compounds
+    ]
+    for coro in atqdm(
+        asyncio.as_completed(tasks),
         total=len(compounds),
+        desc=f"Processing {len(compounds)} compounds into {len(compounds) * 2 * additional_styles} records",
     ):
-        # Generate the prompts for our compound, for each of the 5 image categories
-        prompts, sentences = generate_image_prompts_and_sentences(compound)
-
-        # Generate an image for each of the 5 categories
-        images = generate_images(prompts)
-
-        # Create two entries for our dataset, one for each interpretation of the idiom
-        entries = create_dataset_entries(compound, sentences, prompts, images)
-
+        entries = await coro
         dataset_entries.extend(entries)
 
-    # Add an ID column to our dataset entries
+    # Add IDs to entries
     for i, entry in enumerate(dataset_entries):
         entry["id"] = i
 
-    # Create the Dataset object from our list of dictionaries.
-    # Tells PyArrow what to expect for each column (We'll create a Parquet from Arrow format)
+    # Create the Dataset object
     features = Features(
         {
             "id": Value("int32"),
             "compound": Value("string"),
             "sentence_type": Value("string"),
             "sentence": Value("string"),
+            "style": Value("string"),
             "image_1_prompt": Value("string"),
-            "image_1": HFImage(),
             "image_2_prompt": Value("string"),
-            "image_2": HFImage(),
             "image_3_prompt": Value("string"),
-            "image_3": HFImage(),
             "image_4_prompt": Value("string"),
-            "image_4": HFImage(),
             "image_5_prompt": Value("string"),
-            "image_5": HFImage(),
+            "image_1": Image(),
+            "image_2": Image(),
+            "image_3": Image(),
+            "image_4": Image(),
+            "image_5": Image(),
         }
     )
     dataset = Dataset.from_list(dataset_entries, features=features)
 
-    # Order the columns as we want them in the dataset on HuggingFace
+    # Order columns
     column_order = [
         "id",
         "compound",
         "sentence_type",
         "sentence",
+        "style",
         "image_1_prompt",
         "image_1",
         "image_2_prompt",
@@ -334,11 +433,10 @@ def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
     ]
     dataset = dataset.select_columns(column_order)
 
-    # Optionally save the dataset
+    # Push to hub if requested
     if push_to_hub:
         organization_name = "UCSC-Admire"
-        bonus_tag = ""  # A tag to be appended to the dataset name, if you desire
-        dataset_name = f"idiom-dataset-{len(compounds)}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}{f"-{bonus_tag}" if bonus_tag else ""}"
+        dataset_name = f"idiom-dataset-{len(compounds)}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
         dataset.push_to_hub(
             f"{organization_name}/{dataset_name}",
@@ -350,24 +448,42 @@ def create_and_push_dataset(compounds: list[str], push_to_hub: bool = True):
 
 
 def get_compounds() -> list[str]:
-    """
-    Gets the compounds to use for the dataset.
-    """
-    print(f"Loading compounds...")
-    compounds = ["burn the midnight oil", "piece of cake"]
+    """Get the compounds to use for the dataset."""
+    print("Loading compounds...")
+    compounds = [
+        "burn the midnight oil",
+        "piece of cake",
+        # "bite off more than you can chew",
+        "raining cats and dogs",
+        # "kill two birds with one stone",
+        # "spill the beans",
+        # "under the weather",
+    ]
     print(f"Loaded {len(compounds)} compounds.")
     return compounds
 
 
-def main():
-    # Get compounds
+# NOTE: Commented out for testing
+# def get_compounds() -> list[str]:
+#     # TODO: We want this to return a dict of idioms, keyed by LanguageType. Then incorporate this information into the
+#     print("Loading compounds...")
+#     with open("data/en_idioms.txt") as f:
+#         compounds = [line.strip() for line in f.readlines() if line.strip()]
+#     # TODO: Load other language idioms, then merge them somehow.
+#     print(f"Loaded {len(compounds)} compounds.")
+#     return compounds
+
+
+async def main():
+    """Main async function."""
+    # Determines how many style variations to generate for each idiom, and how many records are generated.
+    # If you have 2 compounds, and you set additional_styles=3, then you'll get 2 compounds * 2 interpretations * 3 styles = 12 records in the dataset.
+    additional_styles = 3
+
     compounds = get_compounds()
-
-    # Create dataset using compounds
-    dataset = create_and_push_dataset(compounds)
-
+    dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

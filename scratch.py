@@ -1,5 +1,16 @@
-from datasets import load_dataset
+from typing import NamedTuple
 
-dataset = load_dataset("UCSC-Admire/idiom-dataset-2-2024-11-09_22-04-33")
-# To view an image
-print(dataset["train"][0])  # This will show you the image data
+
+class PromptItem(NamedTuple):
+    """A single prompt for an image category."""
+
+    category: int
+    prompt: str
+
+
+l: list[PromptItem] = [
+    PromptItem(category=1, prompt="Hello, world!"),
+    PromptItem(category=2, prompt="Hello, zworld!"),
+]
+
+print(l)
