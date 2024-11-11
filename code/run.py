@@ -45,6 +45,22 @@ class SentenceType(Enum):
     LITERAL = auto()
 
 
+class LanguageType(Enum):
+    """Types of languages, using ISO 639-1 standard language codes"""
+
+    ENGLISH = "en"
+    PORTUGUESE = "pt"
+    FRENCH = "fr"
+    SPANISH = "es"
+
+
+class CompoundItem(NamedTuple):
+    """A single compound, with its language."""
+
+    compound: str
+    langauge: LanguageType
+
+
 class PromptItem(NamedTuple):
     """A single prompt for an image category, with style modifier."""
 
@@ -98,7 +114,7 @@ RATE_LIMITER = TokenBucket(rate=10, capacity=500)
 
 
 async def generate_image_prompts_and_sentences(
-    compound: str, additional_styles: int = 0
+    compound: CompoundItem, additional_styles: int = 0
 ) -> tuple[dict[ImageCategory, list[PromptItem]], dict[SentenceType, str]]:
     """
     Asynchronously generate image prompts and sentences using LLaMA.
@@ -113,7 +129,9 @@ async def generate_image_prompts_and_sentences(
     """
     model_name = "meta/meta-llama-3-70b-instruct"
     input = {
-        "prompt": prompts.USER_PROMPT.format(COMPOUND=compound),
+        "prompt": prompts.USER_PROMPT.format(
+            COMPOUND=compound.compound, LANGUAGE=compound.langauge.name
+        ),
         "system_prompt": prompts.SYSTEM_PROMPT,
         "temperature": 0.1,
         "max_tokens": 4096,
@@ -128,12 +146,12 @@ async def generate_image_prompts_and_sentences(
     response_joined = "".join(response)
 
     return extract_image_categories_and_sentences(
-        response_joined, additional_styles=additional_styles
+        compound, response_joined, additional_styles=additional_styles
     )
 
 
 def extract_image_categories_and_sentences(
-    response: str, additional_styles: int = 0
+    compound: CompoundItem, response: str, additional_styles: int = 0
 ) -> tuple[dict[ImageCategory, list[PromptItem]], dict[SentenceType, str]]:
     """
     Parses the chat response to extract the image categories and prompts.
@@ -187,6 +205,10 @@ def extract_image_categories_and_sentences(
 
     # 3: Optionally enhance the image prompts with the desired number of randomly-selected style modifiers.
     if additional_styles:
+        # Set Random seed. By setting it here (and incorporating the compound), we ensure that each compound gets its own unique but deterministic set of styles, the same across runs.
+        random_seed = hash(f"{SEED}-{compound.compound}")
+        random.seed(random_seed)
+
         # Sample N additional styles without replacement
         if additional_styles > len(styles.STYLE_MODIFIERS):
             print(
@@ -263,7 +285,9 @@ async def generate_images(
     return result
 
 
-async def process_compound(compound: str, additional_styles: int = 0) -> list[dict]:
+async def process_compound(
+    compound: CompoundItem, additional_styles: int = 0
+) -> list[dict]:
     """
     Process a single compound asynchronously.
     Args:
@@ -284,7 +308,7 @@ async def process_compound(compound: str, additional_styles: int = 0) -> list[di
 
 
 def create_dataset_entries(
-    compound: str,
+    compound: CompoundItem,
     sentences: dict[SentenceType, str],
     image_items: dict[ImageCategory, list[ImageItem]],
 ) -> list[dict]:
@@ -340,7 +364,8 @@ def create_dataset_entries(
             # Create the entry: Note that image_1 is the most relevant, based on the ordering rules for the sentence type
             entries.append(
                 {
-                    "compound": compound,
+                    "langauge": compound.language.value,
+                    "compound": compound.compound,
                     "sentence_type": sentence_type,
                     "sentence": sentence,
                     "style": style,
@@ -361,7 +386,7 @@ def create_dataset_entries(
 
 
 async def create_and_push_dataset(
-    compounds: list[str], additional_styles: int = 0, push_to_hub: bool = True
+    compounds: list[CompoundItem], additional_styles: int = 0, push_to_hub: bool = True
 ):
     """
     Asynchronously create dataset from multiple compounds.
@@ -395,6 +420,7 @@ async def create_and_push_dataset(
     features = Features(
         {
             "id": Value("int32"),
+            "language": Value("string"),
             "compound": Value("string"),
             "sentence_type": Value("string"),
             "sentence": Value("string"),
@@ -416,6 +442,7 @@ async def create_and_push_dataset(
     # Order columns
     column_order = [
         "id",
+        "language",
         "compound",
         "sentence_type",
         "sentence",
@@ -447,31 +474,31 @@ async def create_and_push_dataset(
     return dataset
 
 
-def get_compounds() -> list[str]:
-    """Get the compounds to use for the dataset."""
-    print("Loading compounds...")
-    compounds = [
-        "burn the midnight oil",
-        "piece of cake",
-        # "bite off more than you can chew",
-        "raining cats and dogs",
-        # "kill two birds with one stone",
-        # "spill the beans",
-        # "under the weather",
-    ]
-    print(f"Loaded {len(compounds)} compounds.")
-    return compounds
-
-
 # NOTE: Commented out for testing
-# def get_compounds() -> list[str]:
-#     # TODO: We want this to return a dict of idioms, keyed by LanguageType. Then incorporate this information into the
-#     print("Loading compounds...")
-#     with open("data/en_idioms.txt") as f:
-#         compounds = [line.strip() for line in f.readlines() if line.strip()]
-#     # TODO: Load other language idioms, then merge them somehow.
-#     print(f"Loaded {len(compounds)} compounds.")
-#     return compounds
+def get_compounds() -> list[CompoundItem]:
+    """Get compounds from all language files."""
+    print("Loading compounds...")
+    compounds = []
+
+    # Load compounds for each language, and accumulate them into `compounds`
+    for language in LanguageType:
+        filepath = f"data/{language.value}_idioms.txt"
+        if os.path.exists(filepath):
+            with open(filepath) as f:
+                language_compounds = [
+                    CompoundItem(text=line.strip(), language=language)
+                    for line in f.readlines()
+                    if line.strip()
+                ]
+                compounds.extend(language_compounds)
+        else:
+            # Let's skip languages that don't have an idiom file.
+            print(
+                f"Warning: Idiom file {filepath} not found for langauge {language}. Skipping language."
+            )
+
+    print(f"Loaded {len(compounds)} compounds across {len(LanguageType)} languages.")
+    return compounds
 
 
 async def main():
@@ -481,6 +508,9 @@ async def main():
     additional_styles = 3
 
     compounds = get_compounds()
+    # TESTING DELETE THIS BELOW
+    compounds = compounds[:2]
+    # TESTING DELETE THIS ABOVE
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
 

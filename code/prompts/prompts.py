@@ -8,8 +8,9 @@ You are tasked with generating prompts for an image generation model based on a 
 
 Input variables:
 <compound>{COMPOUND}</compound>
+<language>{LANGUAGE}</language>
 
-The compound is a phrase that can be interpreted to have both a literal and an idiomatic meaning.
+The compound is a phrase in {LANGUAGE} that can be interpreted to have both a literal and an idiomatic meaning.
 
 Generate prompts for the following five image categories:
 
@@ -19,7 +20,7 @@ Generate prompts for the following five image categories:
 4. Something related to the literal meaning, but not synonymous with it.
 5. A distractor, which belongs to the same category as the compound (e.g., an object or activity) but is unrelated to both the literal and idiomatic meanings.
 
-First, generate an example sentence showing the compound in use under each interpretation (idiomatic, literal).
+First, generate an example sentence showing the compound in use under each interpretation (idiomatic, literal). The sentence should be in {LANGUAGE}, reflecting natural usage in that langauge.
 - It's okay to perform some minor conjugation of the compound -- e.g., "burying the hatchet" could be used as "bury the hatchet" or "buried the hatchet".
 
 For the literal interpretations (either for the prompts or the example sentence), it's okay if the sentence is a bit contrived or absurd as a result of the difficulty of literally interpreting the compound.
