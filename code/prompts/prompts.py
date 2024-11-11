@@ -29,11 +29,13 @@ For example "shooting the breeze" could be literally interpreted as shooting a g
 For each category, follow these steps:
 1. Analyze the compound to determine the appropriate interpretation, based on the image category.
 2. Brainstorm potential content that fits the category's requirements. For compounds for which it's difficult to come up with a good literal interpretation, give your best effort to generate one, thinking creatively.
-3. Develop a detailed image generation prompt that includes:
+3. Develop a detailed image generation prompt IN ENGLISH that includes:
    a. A clear description of the main subject or action
    b. Relevant details about the setting, style, or mood
    c. Any specific visual elements that should be included
 
+It's important that despite the language of the compound provided in the <language> tags above, you generate the image generation prompts in English.
+   
 Present your output in the following format:
 
 <idiomatic_sentence>

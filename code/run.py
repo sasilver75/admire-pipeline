@@ -58,7 +58,7 @@ class CompoundItem(NamedTuple):
     """A single compound, with its language."""
 
     compound: str
-    langauge: LanguageType
+    language: LanguageType
 
 
 class PromptItem(NamedTuple):
@@ -130,7 +130,7 @@ async def generate_image_prompts_and_sentences(
     model_name = "meta/meta-llama-3-70b-instruct"
     input = {
         "prompt": prompts.USER_PROMPT.format(
-            COMPOUND=compound.compound, LANGUAGE=compound.langauge.name
+            COMPOUND=compound.compound, LANGUAGE=compound.language.name
         ),
         "system_prompt": prompts.SYSTEM_PROMPT,
         "temperature": 0.1,
@@ -364,7 +364,7 @@ def create_dataset_entries(
             # Create the entry: Note that image_1 is the most relevant, based on the ordering rules for the sentence type
             entries.append(
                 {
-                    "langauge": compound.language.value,
+                    "language": compound.language.value,
                     "compound": compound.compound,
                     "sentence_type": sentence_type,
                     "sentence": sentence,
@@ -486,7 +486,7 @@ def get_compounds() -> list[CompoundItem]:
         if os.path.exists(filepath):
             with open(filepath) as f:
                 language_compounds = [
-                    CompoundItem(text=line.strip(), language=language)
+                    CompoundItem(compound=line.strip(), language=language)
                     for line in f.readlines()
                     if line.strip()
                 ]
@@ -494,7 +494,7 @@ def get_compounds() -> list[CompoundItem]:
         else:
             # Let's skip languages that don't have an idiom file.
             print(
-                f"Warning: Idiom file {filepath} not found for langauge {language}. Skipping language."
+                f"Warning: Idiom file {filepath} not found for language {language}. Skipping language."
             )
 
     print(f"Loaded {len(compounds)} compounds across {len(LanguageType)} languages.")
@@ -505,12 +505,12 @@ async def main():
     """Main async function."""
     # Determines how many style variations to generate for each idiom, and how many records are generated.
     # If you have 2 compounds, and you set additional_styles=3, then you'll get 2 compounds * 2 interpretations * 3 styles = 12 records in the dataset.
-    additional_styles = 3
+    additional_styles = 2
 
     compounds = get_compounds()
-    # TESTING DELETE THIS BELOW
-    compounds = compounds[:2]
-    # TESTING DELETE THIS ABOVE
+    # # TESTING DELETE THIS BELOW
+    # compounds = compounds[:2]  # Just test the first two idioms for now
+    # # TESTING DELETE THIS ABOVE
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
 
