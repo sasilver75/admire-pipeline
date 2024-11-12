@@ -15,6 +15,7 @@ from datasets import Dataset, Features, Image, Value
 from dotenv import load_dotenv
 from tqdm.asyncio import tqdm as atqdm
 import httpx
+from utils import LanguageType
 
 # Load environment variables
 load_dotenv()
@@ -44,15 +45,6 @@ class SentenceType(Enum):
 
     IDIOMATIC = auto()
     LITERAL = auto()
-
-
-class LanguageType(Enum):
-    """Types of languages, using ISO 639-1 standard language codes"""
-
-    ENGLISH = "en"
-    PORTUGUESE = "pt"
-    FRENCH = "fr"
-    SPANISH = "es"
 
 
 class CompoundItem(NamedTuple):
