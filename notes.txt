@@ -1,0 +1,47 @@
+Running into 3/561 examples on a run on Dec 2 10:50AM where the LLM response was malformed
+and data couldn't be appropriatly extracted from it. 
+
+Was having it generate prompts like this:
+
+<prompts>
+<category1>
+A luxurious awards ceremony scene where a dignified presenter holds a gleaming blue ribbon...
+</category1>
+<category2>
+A whimsical still life featuring a delicate, antique porcelain doll adorned with a bright blue ribbon...
+</category3>
+A bustling county fair scene where a proud farmer holds up a prize-winning vegetable...
+</category3>
+<category4>
+A nostalgic, vintage-inspired scene of a young girl's bedroom...
+</category4>
+<category5>
+A dramatic, high-fashion scene where a stunning model walks down a catwalk...
+</category5>
+</prompts>
+
+See that only the following categories could be extracted:
+Found 3 category matches:
+- Category 1 (ImageCategory.SYNONYM_IDIOMATIC): A luxurious awards ceremony scene where a dignified presenter holds a gleaming blue ribbon, suspende...
+- Category 4 (ImageCategory.RELATED_LITERAL): A nostalgic, vintage-inspired scene of a young girl's bedroom, where a collection of treasured posse...
+- Category 5 (ImageCategory.DISTRACTOR): A dramatic, high-fashion scene where a stunning model walks down a catwalk, wearing a show-stopping ...
+
+-----
+Or results like
+"\n\nPlease provide the compound phrase you'd like me to work with, and I'll generate the example sentences and image generation prompts according to the specified format and guidelines."
+Where the LM just didn't understand that it was supposed to do, and didn't understand that 
+-----
+
+Or generations where:
+Retry attempt 1/10 for request to model black-forest-labs/flux-schnell with input {'prompt': "A serene and peaceful image of a person meditating in a serene natural setting, surrounded by lush greenery and a tranquil waterfall. The subject's eyes are closed, their face relaxed and calm, as they sit cross-legged on a moss-covered rock. The atmosphere is one of stillness and contemplation, with soft, muted colors and gentle textures. The sense of balance and harmony is palpable, as if the person has found a state of inner peace. Generate the image in the following style: impressionist."} after error: ReplicateError Details:
+type: Prediction failed: All generated images contained NSFW content. Try running it again with a different prompt.
+
+Or
+
+Retry attempt 1/10 for request to model black-forest-labs/flux-schnell with input {'prompt': "A serene and peaceful image of a person meditating in a serene natural setting, surrounded by lush greenery and a tranquil waterfall. The subject's eyes are closed, their face relaxed and calm, as they sit cross-legged on a moss-covered rock. The atmosphere is one of stillness and contemplation, with soft, muted colors and gentle textures. The sense of balance and harmony is palpable, as if the person has found a state of inner peace. Generate the image in the following style: impressionist."} after error: ReplicateError Details:
+type: Prediction failed: All generated images contained NSFW content. Try running it again with a different prompt.
+
+
+Where the diffusion model took a totally demure set of prompts and generated NSFW images, which we then had to retry.
+-----
+

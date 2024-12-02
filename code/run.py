@@ -79,36 +79,59 @@ class TokenBucket:
         self.request_count = 0  # I can't imagine that this would realistically overflow
         self.report_every = report_every
 
+    # async def acquire(self):
+    #     """Acquire a token, waiting if necessary."""
+    #     async with self.lock:
+    #         # Add new tokens based on time passed since last acquire call
+    #         now = time.time()
+    #         new_tokens = (now - self.last_update) * self.rate
+    #         self.tokens = min(self.capacity, self.tokens + new_tokens)
+    #         self.last_update = now
+
+    #         # If we need tokens, wait for them to be added, then update token counts
+    #         if self.tokens < 1:
+    #             wait_time = (1 - self.tokens) / self.rate
+    #             # print(f"No tokens available; waiting {wait_time:.2f} seconds...")
+    #             await asyncio.sleep(wait_time)
+    #             # Recalculate tokens after sleep
+    #             now = time.time()
+    #             new_tokens = (now - self.last_update) * self.rate
+    #             self.tokens = min(self.capacity, new_tokens)
+    #             self.last_update = now
+
+    #         # "Spend" a token
+    #         self.tokens -= 1
+    #         self.request_count += 1
+
+    #         if self.report_every and self.request_count % self.report_every == 0:
+    #             print(f"TokenBucket request count: {self.request_count}")
+
     async def acquire(self):
         """Acquire a token, waiting if necessary."""
         async with self.lock:
-            # Add new tokens based on time passed since last acquire call
-            now = time.time()
-            new_tokens = (now - self.last_update) * self.rate
-            self.tokens = min(self.capacity, self.tokens + new_tokens)
-            self.last_update = now
-
-            # If we need tokens, wait for them to be added, then update token counts
-            if self.tokens < 1:
-                wait_time = (1 - self.tokens) / self.rate
-                print(f"No tokens available; waiting {wait_time:.2f} seconds...")
-                await asyncio.sleep(wait_time)
-                # Recalculate tokens after sleep
+            while True:
+                # Add new tokens based on time passed
                 now = time.time()
                 new_tokens = (now - self.last_update) * self.rate
-                self.tokens = min(self.capacity, new_tokens)
+                self.tokens = min(self.capacity, self.tokens + new_tokens)
                 self.last_update = now
 
-            # "Spend" a token
-            self.tokens -= 1
-            self.request_count += 1
-
-            if self.report_every and self.request_count % self.report_every == 0:
-                print(f"TokenBucket request count: {self.request_count}")
+                # If we have enough tokens, disburse one and return
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    self.request_count += 1  # Only increment when we actually disburse a token
+                    
+                    if self.report_every and self.request_count % self.report_every == 0:
+                        print(f"TokenBucket request count: {self.request_count}")
+                    return
+                
+                # Otherwise, calculate wait time and sleep
+                wait_time = (1 - self.tokens) / self.rate
+                await asyncio.sleep(wait_time)
 
 # Replicate limit of 600 requests per minute = 10 requests per second
-# I'm setting the capacity to 500, just so that we don't accidentally trip the rate limit somehow.
-RATE_LIMITER = TokenBucket(rate=10, capacity=500, report_every=500)
+# I'm setting the capacity to 400, just so that we don't accidentally trip the rate limit somehow.
+RATE_LIMITER = TokenBucket(rate=10, capacity=400, report_every=500)
 MAX_RETRIES = 10
 
 
@@ -227,12 +250,15 @@ def extract_image_categories_and_sentences(
 ) -> tuple[dict[ImageCategory, list[PromptItem]], dict[SentenceType, str]]:
     """
     Parses the chat response to extract the image categories and prompts.
+    Later, new PromptItems will be cerated with diferent style modifiers for each variation.
     Args:
         response: The chat response from the API.
         enhance_with_style: Whether to enhance the prompts with the same randomly-selected style modifier.
     Returns:
         A dictionary with (image category, prompt) items.
     """
+    print(f"Processing compound: {compound.compound}")
+    print(f"Raw LLM response: \n {response} \n")
     sentence_prompts: dict[SentenceType, str] = {}
     category_prompts: dict[ImageCategory, list[PromptItem]] = {}
     category_number_name_lookup = {
@@ -245,7 +271,10 @@ def extract_image_categories_and_sentences(
 
     # 1: Extract the example sentences for each interpretation
     sentence_pattern = r"<(idiomatic|literal)_sentence>(.*?)</\1_sentence>"
-    sentence_matches = re.finditer(sentence_pattern, response, re.DOTALL)
+    sentence_matches = list(re.finditer(sentence_pattern, response, re.DOTALL))
+    print(f"Found {len(sentence_matches)} sentence matches:")
+    for match in sentence_matches:
+        print(f"- {match.group(1)}: {match.group(2).strip()[:100]}...")
     for match in sentence_matches:
         sentence_type = (
             SentenceType.IDIOMATIC
@@ -256,13 +285,21 @@ def extract_image_categories_and_sentences(
         sentence_prompts[sentence_type] = sentence
 
     if len(sentence_prompts) != len(SentenceType):
+        print("\nMissing categories. Found:")
+        for category, prompts in category_prompts.items():
+            print(f"- {category}: {prompts[0].prompt}")
         raise ValueError(
             f"Expected to find {len(SentenceType)} sentences, but found {len(sentence_prompts)}. Found sentences: {list(sentence_prompts.keys())}"
         )
 
     # 2: Extract the image prompts for each category
     category_pattern = r"<category(\d)>(.*?)</category\1>"
-    category_matches = re.finditer(category_pattern, response, re.DOTALL)
+    category_matches = list(re.finditer(category_pattern, response, re.DOTALL))
+    print(f"\nFound {len(category_matches)} category matches:")
+    for match in category_matches:
+        category_num = int(match.group(1))
+        category = category_number_name_lookup.get(category_num)
+        print(f"- Category {category_num} ({category}): {match.group(2).strip()[:100]}...")
 
     for match in category_matches:
         category_num = int(match.group(1))
@@ -481,8 +518,14 @@ async def create_and_push_dataset(
     Returns:
         The created Dataset object.
     """
-    print(f"Given{len(compounds)} compounds and {additional_styles} styles per compound, this is {len(compounds)} expected language model requests and {len(compounds)}*{additional_styles}*5 = {len(compounds)*additional_styles*5} expected diffusion model requests, plus additional prediction creation and polling requests (which don't cost money)")
-
+    print(
+        f"Given {len(compounds)} compounds and {additional_styles} styles per compound "
+        f"({additional_styles + 1} total styles including base), expecting:\n"
+        f"- {len(compounds)} language model requests\n"
+        f"- {len(compounds) * (additional_styles + 1) * 5} image generation requests\n"
+        f"- {len(compounds) * (additional_styles + 1) * 5} image download requests\n"
+        f"- Plus additional polling requests for each image generation"
+    )
     dataset_entries = []
 
     # Process all compounds concurrently with progress bar (Note that the process will seem to "jump", since tasks launched at the same time will likely complete at roughly the same time. It's not a smooth progress bar.)
@@ -495,8 +538,12 @@ async def create_and_push_dataset(
         total=len(compounds),
         desc=f"Processing {len(compounds)} compounds into {len(compounds) * additional_styles * 2} records",
     ):
-        entries = await coro
-        dataset_entries.extend(entries)
+        try:
+            entries = await coro
+            dataset_entries.extend(entries)
+        except Exception as e:
+            print(f"\nSkipping compound due to error: {str(e)}")
+
 
     # Add IDs to entries
     for i, entry in enumerate(dataset_entries):
@@ -546,12 +593,14 @@ async def create_and_push_dataset(
     ]
     dataset = dataset.select_columns(column_order)
 
+    # Create train/test splits
+    splits = dataset.train_test_split(test_size=0.10)
     # Push to hub if requested
     if push_to_hub:
         organization_name = "UCSC-Admire"
         dataset_name = f"idiom-dataset-{len(compounds)}-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
-        dataset.push_to_hub(
+        splits.push_to_hub(
             f"{organization_name}/{dataset_name}",
             token=os.environ["HUGGINGFACE_TOKEN"],
         )
@@ -593,11 +642,12 @@ async def main():
     """Main async function."""
     # Determines how many style variations to generate for each idiom, and how many records are generated.
     # If you have 2 compounds, and you set additional_styles=3, then you'll get 2 compounds * 2 interpretations * 3 styles = 12 records in the dataset.
-    additional_styles = 2
+    additional_styles = 3
 
     compounds = get_compounds()
+    print(f"Loaded {len(compounds)} compounds.")
     # # TESTING DELETE THIS BELOW
-    compounds = compounds[:100]  # Just test the first few idioms for now
+    # compounds = compounds[:30]  # Just test the first few idioms for now
     # # TESTING DELETE THIS ABOVE
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
