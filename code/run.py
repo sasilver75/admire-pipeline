@@ -649,6 +649,9 @@ async def main():
     # # TESTING DELETE THIS BELOW
     # compounds = compounds[:30]  # Just test the first few idioms for now
     # # TESTING DELETE THIS ABOVE
+    # NOTE: I think it's normal to see very little progress for a while, and for the first few examples to be "failures"
+    # Those are the failures that have bad LLM outputs that we can't use. They're "failing out early," while the successful ones take longer to complete.
+    # It took ~90 minutes to generate our large dataset of 4k examples.
     dataset = await create_and_push_dataset(compounds, additional_styles)
     print("Done!")
 
