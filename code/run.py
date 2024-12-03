@@ -536,7 +536,7 @@ async def create_and_push_dataset(
     for coro in atqdm(
         asyncio.as_completed(tasks),
         total=len(compounds),
-        desc=f"Processing {len(compounds)} compounds into {len(compounds) * additional_styles * 2} records",
+        desc=f"Processing {len(compounds)} compounds into {len(compounds) * (additional_styles + 1) * 2} records",
     ):
         try:
             entries = await coro
