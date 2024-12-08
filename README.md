@@ -31,3 +31,9 @@
 - `pyproject.toml`: Configuration for project development tools (e.g. `black`, `isort`) that are used by pre-commit.
 - `README.md`: This file.
 - `requirements.txt`: List of dependencies for the project.
+
+Note that I haven't included the .env file in the submision for obvious reasons.
+
+### Notes
+
+Hi Sicong. Teh only file in here that really needs to be looked at is code/run.py, which contains the pipeline code itself (and links out to code/utils.py). Let me know if you have any troubles running code, if you choose to.
