@@ -37,3 +37,5 @@ Note that I haven't included the .env file in the submision for obvious reasons.
 ### Notes
 
 Hi Sicong. Teh only file in here that really needs to be looked at is code/run.py, which contains the pipeline code itself (and links out to code/utils.py). Let me know if you have any troubles running code, if you choose to.
+
+Note: the other part of this project's code submission is the VLM finetuning here: [https://github.com/sasilver75/admire-pipeline](https://github.com/sasilver75/admire-finetuning-v2/blob/main/README.md)
